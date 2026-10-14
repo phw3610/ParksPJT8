@@ -79,15 +79,20 @@ namespace ScreenRecorder
         // A GPU encoder is tried first: the Microsoft software encoder alone holds
         // about 1.1 GB for a 2560x1440 screen even in low-latency mode's absence and
         // keeps a CPU core busy. Where the GPU encoder is missing or refuses the
-        // format, the software encoder takes over.
-        public static Mp4Writer TryCreate(string path, int width, int height, int fps, int bitrate, out string error)
+        // format, the software encoder takes over. useHardware = false skips the GPU
+        // encoder altogether, for PCs where it produces a black or broken video.
+        public static Mp4Writer TryCreate(string path, int width, int height, int fps, int bitrate, bool useHardware, out string error)
         {
-            Mp4Writer writer = TryCreate(path, width, height, fps, bitrate, true, out error);
-            if (writer != null) return writer;
-            return TryCreate(path, width, height, fps, bitrate, false, out error);
+            if (useHardware)
+            {
+                Mp4Writer hardware = TryCreateWith(path, width, height, fps, bitrate, true, out error);
+                if (hardware != null) return hardware;
+            }
+
+            return TryCreateWith(path, width, height, fps, bitrate, false, out error);
         }
 
-        private static Mp4Writer TryCreate(string path, int width, int height, int fps, int bitrate, bool hardware, out string error)
+        private static Mp4Writer TryCreateWith(string path, int width, int height, int fps, int bitrate, bool hardware, out string error)
         {
             error = null;
 

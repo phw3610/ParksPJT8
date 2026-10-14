@@ -125,7 +125,7 @@ namespace ScreenRecorder
         {
             string error;
             Mp4Writer writer = Mp4Writer.TryCreate(PathFor(s.OutputFolder, baseName, 1),
-                size.Width, size.Height, s.Fps, s.BitrateKbps * 1000, out error);
+                size.Width, size.Height, s.Fps, s.BitrateKbps * 1000, s.HardwareEncoder, out error);
             if (writer == null)
             {
                 reportStartError("MP4 인코더를 시작할 수 없습니다: " + error);
@@ -142,7 +142,7 @@ namespace ScreenRecorder
             try
             {
                 frame = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb);
-                grabber = new ScreenGrabber(GetScreen(s.Monitor), size);
+                grabber = new ScreenGrabber(GetScreen(s.Monitor), size, s.CaptureMode);
                 Raise("녹화 시작: " + Path.GetFileName(writer.Path));
 
                 Stopwatch clock = Stopwatch.StartNew();
@@ -174,7 +174,7 @@ namespace ScreenRecorder
                             frame.Dispose();
                             frame = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb);
                             grabber.Dispose();
-                            grabber = new ScreenGrabber(GetScreen(s.Monitor), size);
+                            grabber = new ScreenGrabber(GetScreen(s.Monitor), size, s.CaptureMode);
                         }
                     }
 
@@ -257,7 +257,7 @@ namespace ScreenRecorder
             writer.Dispose();
             string error;
             Mp4Writer next = Mp4Writer.TryCreate(PathFor(s.OutputFolder, baseName, part),
-                size.Width, size.Height, s.Fps, s.BitrateKbps * 1000, out error);
+                size.Width, size.Height, s.Fps, s.BitrateKbps * 1000, s.HardwareEncoder, out error);
             if (next == null)
             {
                 Raise("다음 녹화 파일을 열지 못해 녹화를 중지합니다: " + error);

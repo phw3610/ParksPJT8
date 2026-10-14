@@ -46,7 +46,11 @@ namespace ScreenRecorder
         private NumericUpDown _bitrateBox, _fpsBox, _partBox, _portBox;
         private Label _folderLabel, _apiStatus;
         private Button _scheduleButton;
-        private Segmented _compressSeg;
+        private Segmented _compressSeg, _captureSeg;
+        private CheckBox _hardwareCheck;
+        private Button _optionsToggle;
+        private Card _optionsCard, _controlCard;
+        private bool _optionsOpen;
         private Label _compressCaption, _downloadHint;
         private Button _downloadButton;
         private CancellationTokenSource _download;   // ffmpeg download in progress
@@ -128,9 +132,8 @@ namespace ScreenRecorder
             _scheduleButton.Click += delegate { EditSchedule(); };
             Controls.Add(_scheduleButton);
 
-            // ---- recording settings (the compression row is always there: a choice, or a button to get ffmpeg)
-            const int extra = 36;
-            _recordingCard = new Card("녹화 설정") { Left = Gutter, Top = 122, Width = ContentWidth, Height = 276 + extra };
+            // ---- main recording settings (the rest is behind "기타 옵션")
+            _recordingCard = new Card("녹화 설정") { Left = Gutter, Top = 122, Width = ContentWidth, Height = 204 };
             Controls.Add(_recordingCard);
 
             Caption(_recordingCard, "모니터", 40);
@@ -149,9 +152,30 @@ namespace ScreenRecorder
             _presetSeg = Place(_recordingCard, new Segmented(PresetNames), FieldX, 112, FieldWidth);
             _presetSeg.UserSelected += delegate { _bitrateBox.Value = PresetKbps[_presetSeg.SelectedIndex]; };
 
-            Caption(_recordingCard, "비트레이트", 148);
-            _bitrateBox = Place(_recordingCard, NewNumber(AppSettings.MinBitrateKbps, AppSettings.MaxBitrateKbps, 100), FieldX, 148, 84);
-            Hint(_recordingCard, "kbps · 높을수록 선명", FieldX + 90, 148, FieldWidth - 90);
+            Caption(_recordingCard, "저장 폴더", 148);
+            Button open = Place(_recordingCard, FlatButton("열기"), FieldX + FieldWidth - 58, 148, 58);
+            open.Click += delegate { OpenFolder(); };
+            Button browse = Place(_recordingCard, FlatButton("변경"), FieldX + FieldWidth - 122, 148, 58);
+            browse.Click += delegate { ChooseFolder(); };
+            _folderLabel = new Label
+            {
+                Left = 16, Top = 180, Width = ContentWidth - 32, Height = 18, AutoSize = false, AutoEllipsis = true,
+                UseMnemonic = false, Font = Theme.Ui(8.5F), ForeColor = Theme.Muted, BackColor = Theme.Card
+            };
+            _recordingCard.Controls.Add(_folderLabel);
+
+            _optionsToggle = FlatButton(string.Empty);
+            _optionsToggle.SetBounds(Gutter, _recordingCard.Bottom + 10, ContentWidth, 32);
+            _optionsToggle.Click += delegate { SetOptionsOpen(!_optionsOpen); };
+            Controls.Add(_optionsToggle);
+
+            // ---- other options: bitrate, frame rate, capture method, hardware encoding, compression
+            _optionsCard = new Card("기타 옵션") { Left = Gutter, Top = _optionsToggle.Bottom + 10, Width = ContentWidth, Height = 228, Visible = false };
+            Controls.Add(_optionsCard);
+
+            Caption(_optionsCard, "비트레이트", 40);
+            _bitrateBox = Place(_optionsCard, NewNumber(AppSettings.MinBitrateKbps, AppSettings.MaxBitrateKbps, 100), FieldX, 40, 84);
+            Hint(_optionsCard, "kbps · 높을수록 선명", FieldX + 90, 40, FieldWidth - 90);
             _bitrateBox.ValueChanged += delegate
             {
                 if (_loading) return;
@@ -160,31 +184,38 @@ namespace ScreenRecorder
                 Save();
             };
 
-            Caption(_recordingCard, "프레임 · 분할", 184);
-            _fpsBox = Place(_recordingCard, NewNumber(AppSettings.MinFps, AppSettings.MaxFps, 1), FieldX, 184, 52);
-            Hint(_recordingCard, "fps", FieldX + 56, 184, 26);
+            Caption(_optionsCard, "프레임 · 분할", 76);
+            _fpsBox = Place(_optionsCard, NewNumber(AppSettings.MinFps, AppSettings.MaxFps, 1), FieldX, 76, 52);
+            Hint(_optionsCard, "fps", FieldX + 56, 76, 26);
             _fpsBox.ValueChanged += delegate { if (!_loading) { _s.Fps = (int)_fpsBox.Value; Save(); } };
-            _partBox = Place(_recordingCard, NewNumber(AppSettings.MinPartMegabytes, AppSettings.MaxPartMegabytes, 50), FieldX + 88, 184, 68);
-            Hint(_recordingCard, "MB 분할", FieldX + 160, 184, FieldWidth - 160);
+            _partBox = Place(_optionsCard, NewNumber(AppSettings.MinPartMegabytes, AppSettings.MaxPartMegabytes, 50), FieldX + 88, 76, 68);
+            Hint(_optionsCard, "MB 분할", FieldX + 160, 76, FieldWidth - 160);
             _partBox.ValueChanged += delegate { if (!_loading) { _s.PartMegabytes = (int)_partBox.Value; Save(); } };
+
+            // for black or broken videos: another capture route, and the GPU encoder off
+            Caption(_optionsCard, "캡처 방식", 112);
+            _captureSeg = Place(_optionsCard, new Segmented("자동", "Windows", "GDI"), FieldX, 112, FieldWidth);
+            _tips.SetToolTip(_captureSeg,
+                "화면을 가져오는 방법입니다. 일부 화면이 검게 녹화될 때 바꿔서 시험해 보세요.\n" +
+                "자동: GPU 화면 복제(DXGI), 안 되면 GDI\n" +
+                "Windows: Windows 그래픽 캡처. 자동에서 검게 나오는 창에 효과가 있는 경우가 있습니다.\n" +
+                "GDI: 가장 오래된 방식. 다른 방식에서 검게 나올 때 쓰며, 이 PC에서 2560×1440 약 30fps까지 나옵니다.\n" +
+                "저작권 보호(DRM) 영상은 어느 방식에서도 검게 나오며, 우회하지 않습니다.");
+            _captureSeg.UserSelected += delegate { _s.CaptureMode = Math.Max(0, _captureSeg.SelectedIndex); Save(); };
+
+            Caption(_optionsCard, "하드웨어 가속", 148);
+            _hardwareCheck = Place(_optionsCard, new CheckBox { Text = "GPU 인코더 사용", BackColor = Theme.Card, ForeColor = Theme.Text }, FieldX, 148, FieldWidth);
+            _tips.SetToolTip(_hardwareCheck,
+                "영상 압축(H.264)에 그래픽카드를 씁니다. 녹화 영상이 검거나 깨지면 끄고 시험해 보세요.\n" +
+                "끄면 소프트웨어 인코더를 쓰므로 메모리와 CPU를 더 사용합니다.");
+            _hardwareCheck.CheckedChanged += delegate { if (!_loading) { _s.HardwareEncoder = _hardwareCheck.Checked; Save(); } };
 
             BuildCompressRow();
 
-            Caption(_recordingCard, "저장 폴더", 220 + extra);
-            Button open = Place(_recordingCard, FlatButton("열기"), FieldX + FieldWidth - 58, 220 + extra, 58);
-            open.Click += delegate { OpenFolder(); };
-            Button browse = Place(_recordingCard, FlatButton("변경"), FieldX + FieldWidth - 122, 220 + extra, 58);
-            browse.Click += delegate { ChooseFolder(); };
-            _folderLabel = new Label
-            {
-                Left = 16, Top = 252 + extra, Width = ContentWidth - 32, Height = 18, AutoSize = false, AutoEllipsis = true,
-                UseMnemonic = false, Font = Theme.Ui(8.5F), ForeColor = Theme.Muted, BackColor = Theme.Card
-            };
-            _recordingCard.Controls.Add(_folderLabel);
-
-            // ---- hotkey and API
-            Card controlCard = new Card("단축키 · API") { Left = Gutter, Top = 410 + extra, Width = ContentWidth, Height = 152 };
-            Controls.Add(controlCard);
+            // ---- hotkey and API (also under "기타 옵션")
+            _controlCard = new Card("단축키 · API") { Left = Gutter, Top = _optionsCard.Bottom + 12, Width = ContentWidth, Height = 152, Visible = false };
+            Controls.Add(_controlCard);
+            Card controlCard = _controlCard;
 
             Caption(controlCard, "시작/중지 단축키", 40);
             _hotKeyBox = Place(controlCard, new HotKeyBox { BorderStyle = BorderStyle.FixedSingle }, FieldX, 40, FieldWidth);
@@ -221,8 +252,28 @@ namespace ScreenRecorder
                 catch (Exception ex) { Notify("복사하지 못했습니다: " + ex.Message); }
             };
 
-            // Sized from the layout above, so nothing can be cut off.
-            ClientSize = new Size(FormWidth, controlCard.Bottom + 16);
+            SetOptionsOpen(false);
+        }
+
+        // "기타 옵션" (bitrate, frame rate, capture method, compression, hotkey, API) stays folded
+        // away until asked for; the window grows and shrinks with it.
+        private void SetOptionsOpen(bool open)
+        {
+            _optionsOpen = open;
+            _optionsCard.Visible = open;
+            _controlCard.Visible = open;
+            _optionsToggle.Text = open ? "기타 옵션 닫기  ▲" : "기타 옵션 열기  ▼";
+
+            int bottom = open ? _controlCard.Bottom : _optionsToggle.Bottom;
+            if (!IsHandleCreated)
+            {
+                ClientSize = new Size(FormWidth, bottom + 16);   // still laid out in 96-dpi units
+                return;
+            }
+
+            ClientSize = new Size(ClientSize.Width, bottom + (int)Math.Round(16 * DeviceDpi / 96.0));
+            Rectangle area = Screen.FromControl(this).WorkingArea;
+            if (Bottom > area.Bottom) Top = Math.Max(area.Top, area.Bottom - Height);
         }
 
         // The "추가 압축" row: the choice when ffmpeg.exe is next to the program, otherwise a download button.
@@ -231,17 +282,17 @@ namespace ScreenRecorder
             foreach (Control old in new Control[] { _compressCaption, _compressSeg, _downloadButton, _downloadHint })
             {
                 if (old == null) continue;
-                _recordingCard.Controls.Remove(old);
+                _optionsCard.Controls.Remove(old);
                 old.Dispose();
             }
 
             _compressSeg = null;
             _downloadButton = null;
-            _compressCaption = Caption(_recordingCard, "추가 압축", 220);
+            _compressCaption = Caption(_optionsCard, "추가 압축", 184);
 
             if (Compressor.Available)
             {
-                _compressSeg = Place(_recordingCard, new Segmented("안 함", "원본 교체", "원본 유지"), FieldX, 220, FieldWidth);
+                _compressSeg = Place(_optionsCard, new Segmented("안 함", "원본 교체", "원본 유지"), FieldX, 184, FieldWidth);
                 _compressSeg.SelectedIndex = !_s.Compress ? 0 : _s.KeepOriginal ? 2 : 1;
                 _tips.SetToolTip(_compressSeg,
                     "녹화가 끝나면 ffmpeg로 x264(CRF 28) 재인코딩해 용량을 크게 줄입니다.\n" +
@@ -257,8 +308,8 @@ namespace ScreenRecorder
                 return;
             }
 
-            _downloadButton = Place(_recordingCard, FlatButton("ffmpeg 받기"), FieldX, 220, 92);
-            _downloadHint = Hint(_recordingCard, "용량 절감 · 115MB", FieldX + 98, 220, FieldWidth - 98);
+            _downloadButton = Place(_optionsCard, FlatButton("ffmpeg 받기"), FieldX, 184, 92);
+            _downloadHint = Hint(_optionsCard, "용량 절감 · 115MB", FieldX + 98, 184, FieldWidth - 98);
             _tips.SetToolTip(_downloadButton,
                 "ffmpeg.exe가 없어 추가 압축을 쓸 수 없습니다.\n" +
                 "누르면 gyan.dev에서 받아 프로그램 옆에 저장합니다(약 115MB, SHA-256 확인).");
@@ -384,6 +435,8 @@ namespace ScreenRecorder
             _fpsBox.Value = _s.Fps;
             _partBox.Value = _s.PartMegabytes;
             _folderLabel.Text = _s.OutputFolder;
+            _captureSeg.SelectedIndex = _s.CaptureMode;
+            _hardwareCheck.Checked = _s.HardwareEncoder;
             _hotKeyBox.SetValue(_s.HotKeyModifiers, _s.HotKeyCode);
             _apiCheck.Checked = _s.ApiEnabled;
             _portBox.Value = _s.ApiPort;
@@ -414,6 +467,7 @@ namespace ScreenRecorder
                 _tray.Icon = active ? _recordingIcon : _idleIcon;
                 Icon = active ? _recordingIcon : _idleIcon;
                 _recordingCard.Enabled = !active;
+                _optionsCard.Enabled = !active;
             }
 
             string hotKey = HotKey.Format(_s.HotKeyModifiers, _s.HotKeyCode);
@@ -451,8 +505,8 @@ namespace ScreenRecorder
             _trayToggle.Text = "녹화 중지";
             _trayToggle.Enabled = !stopping;
             _statusLabel.ForeColor = Theme.Record;
-            // GDI is the slow fallback (잠금 화면, 원격 세션 등); say so, since the video will be choppy.
-            string slow = _recorder.Backend == "GDI" ? " · 느린 캡처(GDI)" : string.Empty;
+            // GDI is the fallback (잠금 화면, 원격 세션 등) or a chosen mode; show it, since it behaves differently from DXGI.
+            string slow = _recorder.Backend == "GDI" ? " · GDI 캡처" : string.Empty;
             string until = _scheduleStarted ? " · " + _windowEnd.ToString(_windowEnd.Date == DateTime.Today ? "HH:mm" : "M월 d일 HH:mm") + " 종료 예정" : string.Empty;
             _statusLabel.Text = "● 녹화 중 · " + FormatSize(_recorder.Bytes) + until + slow + "\n" + Path.GetFileName(_recorder.CurrentFile);
             _tray.Text = "화면 녹화 — 녹화 중 " + time;

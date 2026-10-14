@@ -29,6 +29,8 @@ namespace ScreenRecorder
         public int BitrateKbps = 3000;
         public int Fps = 10;                // lower fps is the cheapest way to shrink a screen recording
         public int PartMegabytes = 2000;    // start a new file after this much
+        public bool HardwareEncoder = true;  // GPU H.264 encoder first; off = software encoder only (for black/broken videos)
+        public int CaptureMode = 0;          // 0 = automatic (DXGI, then GDI), 1 = Windows Graphics Capture, 2 = GDI only
         public bool Compress = false;       // re-encode with ffmpeg after recording (only if ffmpeg.exe is next to the program)
         public bool KeepOriginal = false;   // with Compress: save the small copy as *-small.mp4 and keep the original
         public string OutputFolder = Path.Combine(
@@ -59,6 +61,7 @@ namespace ScreenRecorder
             Fps = Math.Max(MinFps, Math.Min(MaxFps, Fps));
             PartMegabytes = Math.Max(MinPartMegabytes, Math.Min(MaxPartMegabytes, PartMegabytes));
             ApiPort = Math.Max(MinPort, Math.Min(MaxPort, ApiPort));
+            CaptureMode = Math.Max(0, Math.Min(2, CaptureMode));
             if (string.IsNullOrWhiteSpace(OutputFolder))
             {
                 OutputFolder = new AppSettings().OutputFolder;
@@ -84,6 +87,8 @@ namespace ScreenRecorder
                     s.BitrateKbps = Int(values, "BitrateKbps", s.BitrateKbps);
                     s.Fps = Int(values, "Fps", s.Fps);
                     s.PartMegabytes = Int(values, "PartMegabytes", s.PartMegabytes);
+                    s.HardwareEncoder = Int(values, "HardwareEncoder", s.HardwareEncoder ? 1 : 0) != 0;
+                    s.CaptureMode = Int(values, "CaptureMode", s.CaptureMode);
                     s.Compress = Int(values, "Compress", s.Compress ? 1 : 0) != 0;
                     s.KeepOriginal = Int(values, "KeepOriginal", s.KeepOriginal ? 1 : 0) != 0;
                     s.HotKeyModifiers = (uint)Int(values, "HotKeyModifiers", (int)s.HotKeyModifiers);
@@ -131,6 +136,8 @@ namespace ScreenRecorder
                 text.AppendLine("BitrateKbps=" + BitrateKbps.ToString(CultureInfo.InvariantCulture));
                 text.AppendLine("Fps=" + Fps.ToString(CultureInfo.InvariantCulture));
                 text.AppendLine("PartMegabytes=" + PartMegabytes.ToString(CultureInfo.InvariantCulture));
+                text.AppendLine("HardwareEncoder=" + (HardwareEncoder ? "1" : "0"));
+                text.AppendLine("CaptureMode=" + CaptureMode.ToString(CultureInfo.InvariantCulture));
                 text.AppendLine("Compress=" + (Compress ? "1" : "0"));
                 text.AppendLine("KeepOriginal=" + (KeepOriginal ? "1" : "0"));
                 text.AppendLine("OutputFolder=" + OutputFolder);

@@ -18,15 +18,20 @@ namespace ScreenRecorder
         private readonly AreaScaler _scaler;
         private DxgiCapture _dxgi;
         private DateTime _dxgiRetryAt = DateTime.MinValue;
+        private GdiCapture _gdi;
+        private WgcCapture _wgc;
+        private DateTime _wgcRetryAt = DateTime.MinValue;
+        private readonly int _mode;   // 0 automatic (DXGI), 1 Windows Graphics Capture, 2 GDI only
 
-        // "DXGI" or "GDI": which path produced the last frame.
+        // "DXGI", "WGC" or "GDI": which path produced the last frame.
         public string Backend { get; private set; }
 
-        public ScreenGrabber(Screen screen, Size output)
+        public ScreenGrabber(Screen screen, Size output, int mode)
         {
             _screen = screen;
             _bounds = screen.Bounds;
-            Backend = "DXGI";
+            _mode = mode;
+            Backend = mode == 1 ? "WGC" : mode == 2 ? "GDI" : "DXGI";
             if (output != _bounds.Size)
             {
                 _native = new Bitmap(_bounds.Width, _bounds.Height, PixelFormat.Format32bppRgb);
@@ -37,13 +42,29 @@ namespace ScreenRecorder
         public void Grab(Bitmap target)
         {
             Bitmap source = _native ?? target;
-            bool captured = TryGrabDxgi(source);
-            Backend = captured ? "DXGI" : "GDI";
-
-            using (Graphics graphics = Graphics.FromImage(source))
+            bool captured = false;
+            bool cursorIncluded = false;   // Windows Graphics Capture already draws the cursor
+            if (_mode == 1)
             {
-                if (!captured) CopyScreen(graphics);
-                DrawCursor(graphics);
+                captured = TryGrabWgc(source);
+                cursorIncluded = captured;
+                Backend = captured ? "WGC" : "GDI";
+            }
+            else if (_mode == 0)
+            {
+                captured = TryGrabDxgi(source);
+                Backend = captured ? "DXGI" : "GDI";
+            }
+            else
+            {
+                Backend = "GDI";
+            }
+
+            if (!captured) GrabGdi(source);
+
+            if (!cursorIncluded)
+            {
+                using (Graphics graphics = Graphics.FromImage(source)) DrawCursor(graphics);
             }
 
             if (_native == null) return;
@@ -64,6 +85,8 @@ namespace ScreenRecorder
 
         public void Dispose()
         {
+            if (_gdi != null) _gdi.Dispose();
+            if (_wgc != null) _wgc.Dispose();
             if (_dxgi != null) _dxgi.Dispose();
             if (_native != null) _native.Dispose();
         }
@@ -106,39 +129,74 @@ namespace ScreenRecorder
             }
         }
 
+        private bool TryGrabWgc(Bitmap source)
+        {
+            if (_wgc == null)
+            {
+                if (DateTime.UtcNow < _wgcRetryAt) return false;
+                try
+                {
+                    _wgc = WgcCapture.Create(_screen);
+                    if (_wgc.Width != source.Width || _wgc.Height != source.Height)
+                    {
+                        throw new InvalidOperationException("Windows capture size differs from the screen");
+                    }
+                }
+                catch
+                {
+                    DropWgc();
+                    return false;
+                }
+            }
+
+            BitmapData data = source.LockBits(new Rectangle(0, 0, source.Width, source.Height),
+                ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+            try
+            {
+                _wgc.Capture(data.Scan0, data.Stride);
+                return true;
+            }
+            catch
+            {
+                DropWgc();   // e.g. the monitor changed size; rebuilt after the retry delay
+                return false;
+            }
+            finally
+            {
+                source.UnlockBits(data);
+            }
+        }
+
+        private void DropWgc()
+        {
+            if (_gdi != null) _gdi.Dispose();
+            if (_wgc != null) _wgc.Dispose();
+            _wgc = null;
+            _wgcRetryAt = DateTime.UtcNow.AddSeconds(5);
+        }
+
+        // The fallback and the "GDI" mode. Layered (transparent) windows are included.
+        private void GrabGdi(Bitmap source)
+        {
+            if (_gdi == null) _gdi = new GdiCapture(_screen.DeviceName, _bounds.X, _bounds.Y, _bounds.Width, _bounds.Height);
+
+            BitmapData data = source.LockBits(new Rectangle(0, 0, source.Width, source.Height),
+                ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+            try
+            {
+                _gdi.Capture(data.Scan0, data.Stride);
+            }
+            finally
+            {
+                source.UnlockBits(data);
+            }
+        }
+
         private void DropDxgi()
         {
             if (_dxgi != null) _dxgi.Dispose();
             _dxgi = null;
             _dxgiRetryAt = DateTime.UtcNow.AddSeconds(5);
-        }
-
-        // Graphics.CopyFromScreen rejects SRCCOPY | CAPTUREBLT as an invalid enum
-        // value, so call BitBlt directly. CAPTUREBLT includes layered (transparent)
-        // windows, which a plain copy leaves out.
-        private void CopyScreen(Graphics graphics)
-        {
-            IntPtr screenDc = GetDC(IntPtr.Zero);
-            if (screenDc == IntPtr.Zero) throw new InvalidOperationException("GetDC failed");
-            try
-            {
-                IntPtr hdc = graphics.GetHdc();
-                try
-                {
-                    if (!BitBlt(hdc, 0, 0, _bounds.Width, _bounds.Height, screenDc, _bounds.X, _bounds.Y, SrcCopy | CaptureBlt))
-                    {
-                        throw new InvalidOperationException("BitBlt failed (" + Marshal.GetLastWin32Error() + ")");
-                    }
-                }
-                finally
-                {
-                    graphics.ReleaseHdc(hdc);
-                }
-            }
-            finally
-            {
-                ReleaseDC(IntPtr.Zero, screenDc);
-            }
         }
 
         private void DrawCursor(Graphics graphics)
@@ -177,18 +235,6 @@ namespace ScreenRecorder
 
         private const int CursorShowing = 0x00000001;
         private const int DiNormal = 0x0003;
-        private const int SrcCopy = 0x00CC0020;
-        private const int CaptureBlt = 0x40000000;
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDC(IntPtr window);
-
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr window, IntPtr dc);
-
-        [DllImport("gdi32.dll", SetLastError = true)]
-        private static extern bool BitBlt(IntPtr destination, int x, int y, int width, int height,
-                                          IntPtr source, int sourceX, int sourceY, int operation);
 
         [DllImport("user32.dll")]
         private static extern bool GetCursorInfo(ref CURSORINFO info);

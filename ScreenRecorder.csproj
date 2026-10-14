@@ -16,6 +16,8 @@
   <ItemGroup>
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
+    <!-- Windows Graphics Capture (the "Windows capture" mode). Compile-time metadata only; the types come from the OS. -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.26100.4948" PrivateAssets="all" ExcludeAssets="runtime" />
     <!-- DXGI desktop capture. Embedded below so the program stays one exe. -->
     <PackageReference Include="SharpDX" Version="4.2.0" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="runtime" />
     <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="runtime" />
